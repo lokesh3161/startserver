@@ -1,0 +1,5 @@
+node_modules/
+credentials.json
+downloads/*.pdf
+downloads/*.png
+downloads/*.jpg
