@@ -26,6 +26,16 @@ function saveScreenshotLocally(orderId, screenshotBase64) {
   }
 }
 
+const BOOTH_PIN = '2580'  // Change this to your own PIN
+
+// POST /booth-login — validate shopkeeper PIN
+app.post('/booth-login', (req, res) => {
+  const { pin } = req.body
+  if (!pin) return res.json({ success: false, error: 'PIN required' })
+  if (pin !== BOOTH_PIN) return res.json({ success: false, error: 'Wrong PIN. Try again.' })
+  res.json({ success: true })
+})
+
 // POST /save-order — receives PDF + screenshot from browser
 app.post('/save-order', (req, res) => {
   try {
