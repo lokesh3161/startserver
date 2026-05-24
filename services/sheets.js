@@ -19,6 +19,7 @@ const COL = {
   PRINT_STATUS:   10,
   TIMESTAMP:      11,
   PDF_URL:        12,
+  RELEASE_STATUS: 13,
 }
 
 function getAuth() {
@@ -93,4 +94,35 @@ async function getPdfUrlFromGas(orderId, fileName) {
   return null
 }
 
-module.exports = { getWaitingOrders, getPdfUrlFromGas }
+async function getOrderByIdForRelease(orderId) {
+  try {
+    const auth   = getAuth()
+    const sheets = google.sheets({ version: 'v4', auth })
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A:N`,
+    })
+    const rows = response.data.values || []
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i]
+      if ((row[COL.ORDER_ID] || '').trim() === orderId.trim()) {
+        return {
+          rowIndex:      i + 1,
+          orderId:       row[COL.ORDER_ID]    || '',
+          name:          row[COL.NAME]        || '',
+          fileName:      row[COL.FILE_NAME]   || '',
+          copies:        parseInt(row[COL.COPIES] || '1'),
+          printType:     row[COL.PRINT_TYPE]  || 'B&W',
+          printStatus:   row[COL.PRINT_STATUS]  || '',
+          releaseStatus: row[COL.RELEASE_STATUS] || 'Waiting For Release',
+        }
+      }
+    }
+    return null
+  } catch (err) {
+    logger.error(`getOrderByIdForRelease error: ${err.message}`)
+    return null
+  }
+}
+
+module.exports = { getWaitingOrders, getPdfUrlFromGas, getOrderByIdForRelease }

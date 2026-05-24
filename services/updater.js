@@ -66,4 +66,21 @@ async function updateScreenshotUrl(rowIndex, url) {
   }
 }
 
-module.exports = { updatePrintStatus, updatePdfUrl, updateScreenshotUrl }
+// Update Release Status column N
+async function updateReleaseStatus(rowIndex, status) {
+  try {
+    const auth   = getAuth()
+    const sheets = google.sheets({ version: 'v4', auth })
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!N${rowIndex}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[status]] },
+    })
+    logger.success(`Row ${rowIndex} → Release Status: "${status}"`)
+  } catch (err) {
+    logger.error(`Failed to update release status row ${rowIndex}: ${err.message}`)
+  }
+}
+
+module.exports = { updatePrintStatus, updatePdfUrl, updateScreenshotUrl, updateReleaseStatus }
