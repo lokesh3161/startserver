@@ -125,4 +125,66 @@ async function getOrderByIdForRelease(orderId) {
   }
 }
 
-module.exports = { getWaitingOrders, getPdfUrlFromGas, getOrderByIdForRelease }
+function normalizeOrderStatus(status, releaseStatus) {
+  const raw = (status || releaseStatus || 'Waiting').toString().trim().toLowerCase()
+  if (raw.includes('failed')) return 'Failed'
+  if (raw.includes('printing')) return 'Printing'
+  if (raw.includes('printed')) return 'Printed'
+  if (raw.includes('released')) return 'Released'
+  if (raw.includes('waiting')) return 'Waiting'
+  return 'Waiting'
+}
+
+function detectDocumentType(fileName) {
+  const name = (fileName || '').toLowerCase()
+  if (name.includes('resume')) return 'Resume'
+  if (name.includes('leave')) return 'Leave Letter'
+  if (name.includes('bonafide')) return 'Bonafide'
+  if (name.includes('assignment')) return 'Assignment'
+  return 'Manual PDF'
+}
+
+function parseAmount(value) {
+  const numeric = String(value || '').replace(/[^0-9.-]+/g, '')
+  return parseFloat(numeric) || 0
+}
+
+async function getAllOrders() {
+  try {
+    const auth   = getAuth()
+    const sheets = google.sheets({ version: 'v4', auth })
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: SPREADSHEET_ID,
+      range: `${SHEET_NAME}!A:N`,
+    })
+    const rows = response.data.values || []
+
+    return rows.slice(1).map((row, index) => {
+      const fileName = row[COL.FILE_NAME] || ''
+      const status = normalizeOrderStatus(row[COL.PRINT_STATUS], row[COL.RELEASE_STATUS])
+      return {
+        rowIndex:      index + 2,
+        orderId:       row[COL.ORDER_ID]      || '',
+        name:          row[COL.NAME]          || '',
+        fileName,
+        type:          detectDocumentType(fileName),
+        totalPages:    parseInt(row[COL.TOTAL_PAGES] || '1') || 1,
+        copies:        parseInt(row[COL.COPIES] || '1') || 1,
+        printType:     row[COL.PRINT_TYPE]    || 'B&W',
+        amount:        parseAmount(row[COL.AMOUNT]),
+        transactionId: row[COL.TRANSACTION_ID] || '',
+        screenshotUrl: row[COL.SCREENSHOT_URL] || '',
+        paymentStatus: row[COL.PAYMENT_STATUS] || '',
+        printStatus:   status,
+        timestamp:     row[COL.TIMESTAMP]     || '',
+        pdfUrl:        row[COL.PDF_URL]       || '',
+        releaseStatus: row[COL.RELEASE_STATUS] || 'Waiting',
+      }
+    })
+  } catch (err) {
+    logger.error(`Failed to read all orders from Sheets: ${err.message}`)
+    return []
+  }
+}
+
+module.exports = { getWaitingOrders, getPdfUrlFromGas, getOrderByIdForRelease, getAllOrders }

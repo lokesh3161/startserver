@@ -4,18 +4,28 @@ const logger = require('../utils/logger')
 /**
  * Get the default printer name on this Windows machine
  */
-async function getDefaultPrinter() {
+let printerCache = null
+let lastPrinterCheck = 0
+const PRINTER_CACHE_TTL = 15000
+
+async function getDefaultPrinter(verbose = true) {
   try {
+    const now = Date.now()
+    if (printerCache && now - lastPrinterCheck < PRINTER_CACHE_TTL) {
+      return printerCache.name
+    }
+
     const printers = await ptp.getPrinters()
     if (printers.length === 0) {
       throw new Error('No printers found on this machine')
     }
 
-    // Log all available printers
-    logger.info(`Available printers (${printers.length}):`)
-    printers.forEach((p, i) => {
-      logger.dim(`  ${i + 1}. ${p.name}`)
-    })
+    if (verbose) {
+      logger.info(`Available printers (${printers.length}):`)
+      printers.forEach((p, i) => {
+        logger.dim(`  ${i + 1}. ${p.name}`)
+      })
+    }
 
     // Return the default printer — prefer real printers over virtual ones
     const realPrinter = printers.find(p => {
@@ -27,6 +37,8 @@ async function getDefaultPrinter() {
     })
 
     const defaultPrinter = realPrinter || printers[0]
+    printerCache = defaultPrinter
+    lastPrinterCheck = Date.now()
     return defaultPrinter.name
   } catch (err) {
     logger.error(`Could not get printers: ${err.message}`)

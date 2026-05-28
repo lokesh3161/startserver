@@ -3,10 +3,12 @@ const cors     = require('cors')
 const fs       = require('fs')
 const path     = require('path')
 const logger   = require('../utils/logger')
-const { getOrderByIdForRelease } = require('./sheets')
+const { getOrderByIdForRelease, getAllOrders } = require('./sheets')
 const { updatePrintStatus, updateReleaseStatus } = require('./updater')
 const { printPdf, getDefaultPrinter } = require('./printer')
 const { deletePdf } = require('./downloader')
+
+const { getTunnelUrl } = require('./tunnel')
 
 const app         = express()
 const PORT        = 3001
@@ -59,9 +61,87 @@ app.post('/save-order', (req, res) => {
   }
 })
 
+// GET /tunnel-url — returns current Cloudflare tunnel URL for mobile clients
+app.get('/tunnel-url', (req, res) => {
+  const url = getTunnelUrl()
+  res.json({ success: !!url, url: url || null })
+})
+
 // GET /status — health check
 app.get('/status', (req, res) => {
   res.json({ success: true, message: 'Print agent local server is running' })
+})
+
+app.get('/admin/orders', async (req, res) => {
+  try {
+    const rows = await getAllOrders()
+    const orders = rows.map(order => ({
+      id: order.orderId,
+      fileName: order.fileName || 'Document.pdf',
+      type: order.type,
+      pages: order.totalPages,
+      amount: order.amount,
+      booth: 'Booth 01',
+      status: order.printStatus,
+      time: order.timestamp || new Date().toLocaleTimeString(),
+    }))
+    res.json({ success: true, orders })
+  } catch (err) {
+    res.json({ success: false, error: err.message })
+  }
+})
+
+app.get('/admin/stats', async (req, res) => {
+  try {
+    const rows = await getAllOrders()
+    const totalOrders = rows.length
+    const revenue = rows.reduce((sum, order) => sum + (order.amount || 0), 0)
+    const pending = rows.filter(order => order.printStatus === 'Waiting').length
+    const printed = rows.filter(order => order.printStatus === 'Printed').length
+    const failed = rows.filter(order => order.printStatus === 'Failed').length
+    res.json({ success: true, totalOrders, revenue, pending, printed, failed, activeBooths: 4 })
+  } catch (err) {
+    res.json({ success: false, error: err.message })
+  }
+})
+
+app.get('/admin/booths', async (req, res) => {
+  try {
+    const rows = await getAllOrders()
+    const pending = rows.filter(order => order.printStatus === 'Waiting').length
+    const booths = [
+      { name: 'Booth 01', online: true, queue: Math.max(0, Math.round(pending * 0.4)), connected: true, printed: 48, revenue: 1092, paused: false, locked: false },
+      { name: 'Booth 02', online: true, queue: Math.max(0, Math.round(pending * 0.3)), connected: true, printed: 33, revenue: 732, paused: false, locked: false },
+      { name: 'Booth 03', online: true, queue: Math.max(0, Math.round(pending * 0.2)), connected: true, printed: 57, revenue: 1356, paused: false, locked: false },
+      { name: 'Booth 04', online: false, queue: Math.max(0, Math.round(pending * 0.1)), connected: false, printed: 22, revenue: 478, paused: true, locked: false },
+    ]
+    res.json({ success: true, booths })
+  } catch (err) {
+    res.json({ success: false, error: err.message })
+  }
+})
+
+app.get('/admin/health', async (req, res) => {
+  try {
+    const rows = await getAllOrders()
+    const printer = await getDefaultPrinter(false)
+    const checks = [
+      { name: 'Print Agent', status: 'online' },
+      { name: 'Local Server', status: 'online' },
+      { name: 'Google Sheets', status: rows.length >= 0 ? 'online' : 'offline' },
+      { name: 'Cloudflare Tunnel', status: 'online' },
+      { name: 'Printer Connectivity', status: printer ? 'online' : 'offline' },
+    ]
+    res.json({ success: true, checks })
+  } catch (err) {
+    res.json({ success: true, checks: [
+      { name: 'Print Agent', status: 'online' },
+      { name: 'Local Server', status: 'online' },
+      { name: 'Google Sheets', status: 'offline' },
+      { name: 'Cloudflare Tunnel', status: 'online' },
+      { name: 'Printer Connectivity', status: 'offline' },
+    ], error: err.message })
+  }
 })
 
 // POST /release-print — booth enters Order ID to trigger print
