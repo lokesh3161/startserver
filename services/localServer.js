@@ -17,8 +17,9 @@ const PENDING_DIR = path.join(__dirname, '..', 'downloads')
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization', 'cf-access-client-id'] }))
 app.use(express.json({ limit: '150mb' }))
 app.use((req, res, next) => {
-  const from = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'local'
-  logger.info(`${req.method} ${req.path} ← ${from}`)
+  const from = req.headers['x-forwarded-for']?.split(',')[0].trim() || req.socket.remoteAddress || 'local'
+  const via  = req.headers['x-forwarded-for'] ? 'tunnel' : 'local'
+  logger.info(`${req.method} ${req.path} ← ${via} (${from})`)
   next()
 })
 
@@ -77,11 +78,12 @@ app.post('/save-order', (req, res) => {
 
     if (pdfBase64) {
       fs.writeFileSync(path.join(PENDING_DIR, `${orderId}_pending.b64`), pdfBase64)
-      logger.success(`PDF saved for order ${orderId}`)
+      logger.success(`PDF saved locally for ${orderId} (${(pdfBase64.length / 1024).toFixed(0)} KB)`)
     }
     if (screenshotBase64) saveScreenshotLocally(orderId, screenshotBase64)
 
     saveSettings(orderId, { copies: Number(copies), printSide, colorMode, pageSize, orientation, pageRange })
+    logger.success(`Order queued: ${orderId} | ${colorMode} | ${printSide} | ${copies} copy | ${pageSize}`)
     res.json({ success: true, orderId })
   } catch (err) {
     logger.error(`save-order failed: ${err.message}`)
@@ -100,7 +102,8 @@ app.post('/save-order-meta', (req, res) => {
     if (!orderId) return res.json({ success: false, error: 'Missing orderId' })
 
     saveSettings(orderId, { copies: Number(copies), printSide, colorMode, pageSize, orientation, pageRange, driveUrl })
-    logger.success(`Order meta saved for ${orderId} — PDF on Drive: ${driveUrl}`)
+    logger.success(`Order queued: ${orderId} | ${colorMode} | ${printSide} | ${copies} copy | Drive PDF ready`)
+    logger.dim(`Drive URL: ${driveUrl}`)
     res.json({ success: true, orderId })
   } catch (err) {
     logger.error(`save-order-meta failed: ${err.message}`)
@@ -189,6 +192,7 @@ app.post('/release-print', async (req, res) => {
 
   await updateReleaseStatus(order.rowIndex, 'Released')
   await updatePrintStatus(order.rowIndex, 'Printing')
+  logger.success(`🖨️  Releasing print for ${orderId} — ${order.fileName || 'document'}`)
   res.json({ success: true, message: `Printing started for ${orderId}` })
 
   // Async print
@@ -215,6 +219,7 @@ app.post('/release-print', async (req, res) => {
       return
     }
 
+    logger.info(`Sending to printer...`)
     const printer = await getDefaultPrinter()
     if (printer) {
       const ok = await printPdf(filePath, {
