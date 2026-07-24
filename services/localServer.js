@@ -19,7 +19,6 @@ app.use(cors({
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }))
-app.options('*path', cors())  // handle preflight for all routes
 app.use(express.json({ limit: '100mb' }))
 
 // Cloudflare tunnel shows a browser-warning interstitial on first visit.
