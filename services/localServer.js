@@ -14,8 +14,20 @@ const app         = express()
 const PORT        = 3001
 const PENDING_DIR = path.join(__dirname, '..', 'downloads')
 
-app.use(cors())
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}))
+app.options('*', cors())  // handle preflight for all routes
 app.use(express.json({ limit: '100mb' }))
+
+// Cloudflare tunnel shows a browser-warning interstitial on first visit.
+// Adding this header bypasses it for programmatic fetch requests.
+app.use((req, res, next) => {
+  res.setHeader('cf-access-client-id', 'bypass')
+  next()
+})
 
 // Save screenshot locally as PNG
 function saveScreenshotLocally(orderId, screenshotBase64) {
