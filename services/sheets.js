@@ -3,7 +3,7 @@ const logger = require('../utils/logger')
 
 const SPREADSHEET_ID = '16R6KiGoNgH31qEJxCiKrNTD2u99TKHJfDlzgb6iH_nw'
 const SHEET_NAME     = 'Sheet1'
-const GAS_URL = 'https://script.google.com/macros/s/AKfycby8ykWErzVD79TrafdArCmA6i9YipHVZOjw7zFWDjpL1e44HlKORx-GAnCuGGYgcmyB/exec'
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbzHpCucqACQVCtJKnxUo91RstAaRQcklKuMW760cL5rq4EVuTeUqWwui2IJHHxyxyVs/exec'
 
 const COL = {
   ORDER_ID:       0,
@@ -95,6 +95,7 @@ async function getPdfUrlFromGas(orderId, fileName) {
 }
 
 async function getOrderByIdForRelease(orderId) {
+  // Try direct Sheets API first
   try {
     const auth   = getAuth()
     const sheets = google.sheets({ version: 'v4', auth })
@@ -121,6 +122,19 @@ async function getOrderByIdForRelease(orderId) {
     return null
   } catch (err) {
     logger.error(`getOrderByIdForRelease error: ${err.message}`)
+    // Fallback: try GAS web app (works even when googleapis.com is unreachable)
+    logger.info('Falling back to GAS for order lookup...')
+    try {
+      const axios = require('axios')
+      const res = await axios.get(`${GAS_URL}?action=getOrderForRelease&orderId=${encodeURIComponent(orderId)}`, { timeout: 8000 })
+      const data = res.data
+      if (data && data.orderId) {
+        logger.success(`Got order ${orderId} via GAS fallback`)
+        return data
+      }
+    } catch (gasErr) {
+      logger.error(`GAS fallback also failed: ${gasErr.message}`)
+    }
     return null
   }
 }
@@ -183,6 +197,16 @@ async function getAllOrders() {
     })
   } catch (err) {
     logger.error(`Failed to read all orders from Sheets: ${err.message}`)
+    // Fallback to GAS
+    try {
+      const axios = require('axios')
+      const res = await axios.get(`${GAS_URL}?action=listOrders`, { timeout: 8000 })
+      const data = res.data
+      if (data && Array.isArray(data.orders)) {
+        logger.info('Using GAS fallback for getAllOrders')
+        return data.orders
+      }
+    } catch {}
     return []
   }
 }
