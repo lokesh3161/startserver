@@ -41,15 +41,17 @@ async function publishToGas(url) {
   }
 }
 
-// Watch tunnel.log until URL appears, then publish it
+// Watch both tunnel.log and tunnel_err.log until URL appears, then publish it
 async function watchForTunnelUrl(maxWaitMs = 30000) {
   const start = Date.now()
+  const TUNNEL_ERR = TUNNEL_LOG.replace('tunnel.log', 'tunnel_err.log')
 
   return new Promise((resolve) => {
     const interval = setInterval(() => {
       try {
-        if (!fs.existsSync(TUNNEL_LOG)) return
-        const content = fs.readFileSync(TUNNEL_LOG, 'utf8')
+        let content = ''
+        if (fs.existsSync(TUNNEL_LOG))  content += fs.readFileSync(TUNNEL_LOG,  'utf8')
+        if (fs.existsSync(TUNNEL_ERR))  content += fs.readFileSync(TUNNEL_ERR,  'utf8')
         const url = extractUrl(content)
         if (url) {
           clearInterval(interval)
