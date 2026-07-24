@@ -86,7 +86,7 @@ async function printPdf(filePath, options = {}) {
 
     // Duplex / double-sided
     if (printSide === 'Double') {
-      printOptions.duplex = 'long-edge'    // long-edge = standard double-sided
+      printOptions.side = 'duplexlong'    // long-edge equivalent in pdf-to-printer
     }
 
     // Grayscale for B&W
@@ -96,7 +96,7 @@ async function printPdf(filePath, options = {}) {
 
     // Landscape orientation
     if (orientation === 'landscape') {
-      printOptions.landscape = true
+      printOptions.orientation = 'landscape'
     }
 
     // Page range (skip if 'all')
