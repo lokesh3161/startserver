@@ -2,8 +2,10 @@ const fs     = require('fs')
 const path   = require('path')
 const logger = require('../utils/logger')
 
-const TUNNEL_LOG  = process.env.TUNNEL_LOG || path.join(__dirname, '..', 'tunnel.log')
-const TUNNEL_CACHE = path.join(__dirname, '..', 'tunnel-url.txt')
+const AGENT_DIR   = path.join(__dirname, '..')
+const TUNNEL_LOG  = path.join(AGENT_DIR, 'tunnel.log')
+const TUNNEL_ERR  = path.join(AGENT_DIR, 'tunnel_err.log')
+const TUNNEL_CACHE = path.join(AGENT_DIR, 'tunnel-url.txt')
 const GAS_URL     = 'https://script.google.com/macros/s/AKfycbyWiu74FuFA-m-uord17vVKSN67y3_Hr7gH1u-mZ6SHafeD818LvRaA194C517_HinS/exec'
 
 let currentTunnelUrl = null
@@ -44,7 +46,6 @@ async function publishToGas(url) {
 // Watch both tunnel.log and tunnel_err.log until URL appears, then publish it
 async function watchForTunnelUrl(maxWaitMs = 30000) {
   const start = Date.now()
-  const TUNNEL_ERR = TUNNEL_LOG.replace('tunnel.log', 'tunnel_err.log')
 
   return new Promise((resolve) => {
     const interval = setInterval(() => {
