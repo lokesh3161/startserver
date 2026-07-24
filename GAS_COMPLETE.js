@@ -11,6 +11,8 @@ function doGet(e) {
     if (action === 'assembleFile')   return assembleFile(e.parameter)
     if (action === 'assemblePdf')    return assembleFile(e.parameter)
     if (action === 'getOrderStatus') return getOrderStatus(e.parameter)
+    if (action === 'getOrderForRelease') return getOrderForRelease(e.parameter)
+    if (action === 'listOrders')     return listOrders()
 
     // ── Tunnel URL storage (for mobile print agent connection) ──
     if (action === 'setTunnelUrl') {
@@ -38,8 +40,11 @@ function saveOrder(p) {
     .openById(SPREADSHEET_ID)
     .getSheetByName(SHEET_NAME)
 
+  // Generate orderId if not provided — 'XB' + timestamp ms + 3 random chars
+  const orderId = p.orderId || ('XB' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase())
+
   sheet.appendRow([
-    p.orderId       || '',
+    orderId,
     p.name          || '',
     p.fileName      || '',
     p.totalPages    || '',
@@ -54,7 +59,7 @@ function saveOrder(p) {
     '',
   ])
 
-  return jsonResponse({ success: true })
+  return jsonResponse({ success: true, orderId })
 }
 
 function saveChunk(p) {
@@ -94,6 +99,49 @@ function assembleFile(p) {
   }
 
   return jsonResponse({ success: true, fileUrl })
+}
+
+function getOrderForRelease(p) {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME)
+  const data  = sheet.getDataRange().getValues()
+  for (let i = 1; i < data.length; i++) {
+    if ((data[i][0] || '').toString().trim() === (p.orderId || '').trim()) {
+      return jsonResponse({
+        success:       true,
+        rowIndex:      i + 1,
+        orderId:       data[i][0]  || '',
+        name:          data[i][1]  || '',
+        fileName:      data[i][2]  || '',
+        copies:        parseInt(data[i][4] || '1'),
+        printType:     data[i][5]  || 'B&W',
+        printStatus:   data[i][10] || '',
+        releaseStatus: data[i][13] || 'Waiting For Release',
+      })
+    }
+  }
+  return jsonResponse({ success: false, message: 'Order not found' })
+}
+
+function listOrders() {
+  const sheet = SpreadsheetApp.openById(SPREADSHEET_ID).getSheetByName(SHEET_NAME)
+  const data  = sheet.getDataRange().getValues()
+  const orders = data.slice(1).map((row, idx) => ({
+    rowIndex:      idx + 2,
+    orderId:       row[0]  || '',
+    name:          row[1]  || '',
+    fileName:      row[2]  || '',
+    totalPages:    parseInt(row[3] || '1') || 1,
+    copies:        parseInt(row[4] || '1') || 1,
+    printType:     row[5]  || 'B&W',
+    amount:        parseFloat((row[6] || '0').toString().replace(/[^0-9.-]+/g, '')) || 0,
+    transactionId: row[7]  || '',
+    paymentStatus: row[9]  || '',
+    printStatus:   row[10] || 'Waiting',
+    timestamp:     row[11] ? row[11].toString() : '',
+    pdfUrl:        row[12] || '',
+    releaseStatus: row[13] || 'Waiting',
+  }))
+  return jsonResponse({ success: true, orders })
 }
 
 function getOrderStatus(p) {
