@@ -16,6 +16,11 @@ const PENDING_DIR = path.join(__dirname, '..', 'downloads')
 
 app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization', 'cf-access-client-id'] }))
 app.use(express.json({ limit: '150mb' }))
+app.use((req, res, next) => {
+  const from = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'local'
+  logger.info(`${req.method} ${req.path} ← ${from}`)
+  next()
+})
 
 function saveScreenshotLocally(orderId, screenshotBase64) {
   try {
