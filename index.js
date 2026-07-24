@@ -25,5 +25,11 @@ async function start() {
   logger.success('Waiting for booth release triggers on /release-print\n')
 }
 
-process.on('SIGINT', () => { logger.warn('Stopped.'); process.exit(0) })
+process.on('SIGINT',  () => { logger.warn('Stopped.'); process.exit(0) })
+process.on('SIGTERM', () => { logger.warn('Stopped.'); process.exit(0) })
+
+// Keep process alive and hide the shell prompt
+process.stdin.resume()
+process.stdout.write('\x1b]0;X Buddy Print Agent\x07') // set window title
+
 start()
