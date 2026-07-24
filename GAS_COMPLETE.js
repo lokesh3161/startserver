@@ -41,7 +41,7 @@ function saveOrder(p) {
     .getSheetByName(SHEET_NAME)
 
   // Generate orderId if not provided — 'XB' + timestamp ms + 3 random chars
-  const orderId = p.orderId || ('XB' + Date.now().toString(36).toUpperCase() + Math.random().toString(36).slice(2, 5).toUpperCase())
+  const orderId = p.orderId || ('XB' + String(Math.floor(1000 + Math.random() * 9000)))
 
   sheet.appendRow([
     orderId,
