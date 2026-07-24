@@ -2,46 +2,57 @@ const express  = require('express')
 const cors     = require('cors')
 const fs       = require('fs')
 const path     = require('path')
+const https    = require('https')
 const logger   = require('../utils/logger')
 const { getOrderByIdForRelease, getAllOrders } = require('./sheets')
 const { updatePrintStatus, updateReleaseStatus } = require('./updater')
 const { printPdf, getDefaultPrinter } = require('./printer')
 const { deletePdf } = require('./downloader')
-
 const { getTunnelUrl } = require('./tunnel')
 
 const app         = express()
 const PORT        = 3001
 const PENDING_DIR = path.join(__dirname, '..', 'downloads')
 
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}))
-app.use(express.json({ limit: '100mb' }))
+app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization', 'cf-access-client-id'] }))
+app.use(express.json({ limit: '150mb' }))
 
-// Cloudflare tunnel shows a browser-warning interstitial on first visit.
-// Adding this header bypasses it for programmatic fetch requests.
-app.use((req, res, next) => {
-  res.setHeader('cf-access-client-id', 'bypass')
-  next()
-})
-
-// Save screenshot locally as PNG
 function saveScreenshotLocally(orderId, screenshotBase64) {
   try {
-    const imgPath = path.join(PENDING_DIR, `${orderId}_payment.png`)
-    fs.writeFileSync(imgPath, Buffer.from(screenshotBase64, 'base64'))
+    fs.writeFileSync(path.join(PENDING_DIR, `${orderId}_payment.png`), Buffer.from(screenshotBase64, 'base64'))
     logger.success(`Screenshot saved: ${orderId}_payment.png`)
-  } catch (err) {
-    logger.error(`Screenshot save failed: ${err.message}`)
-  }
+  } catch (err) { logger.error(`Screenshot save failed: ${err.message}`) }
 }
 
-const BOOTH_PIN = '2580'  // Change this to your own PIN
+function saveSettings(orderId, settings) {
+  fs.writeFileSync(path.join(PENDING_DIR, `${orderId}_settings.json`), JSON.stringify(settings))
+  logger.success(`Settings saved for ${orderId}: ${JSON.stringify(settings)}`)
+}
 
-// POST /booth-login — validate shopkeeper PIN
+function loadSettings(orderId) {
+  const p = path.join(PENDING_DIR, `${orderId}_settings.json`)
+  if (!fs.existsSync(p)) return {}
+  try {
+    const s = JSON.parse(fs.readFileSync(p, 'utf8'))
+    fs.unlinkSync(p)
+    return s
+  } catch { return {} }
+}
+
+// Download a file from a URL and save to disk
+function downloadFile(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(destPath)
+    https.get(url, (res) => {
+      if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
+      res.pipe(file)
+      file.on('finish', () => { file.close(); resolve() })
+    }).on('error', (err) => { fs.unlink(destPath, () => {}); reject(err) })
+  })
+}
+
+const BOOTH_PIN = '2580'
+
 app.post('/booth-login', (req, res) => {
   const { pin } = req.body
   if (!pin) return res.json({ success: false, error: 'PIN required' })
@@ -49,7 +60,7 @@ app.post('/booth-login', (req, res) => {
   res.json({ success: true })
 })
 
-// POST /save-order — receives PDF + screenshot + print settings from browser
+// POST /save-order — receives PDF + screenshot + print settings
 app.post('/save-order', (req, res) => {
   try {
     const {
@@ -61,161 +72,156 @@ app.post('/save-order', (req, res) => {
 
     if (pdfBase64) {
       fs.writeFileSync(path.join(PENDING_DIR, `${orderId}_pending.b64`), pdfBase64)
-      logger.success(`PDF saved locally for order ${orderId}`)
+      logger.success(`PDF saved for order ${orderId}`)
     }
-
     if (screenshotBase64) saveScreenshotLocally(orderId, screenshotBase64)
 
-    // Persist print settings so release-print can read them
-    const settings = { copies: Number(copies), printSide, colorMode, pageSize, orientation, pageRange }
-    fs.writeFileSync(
-      path.join(PENDING_DIR, `${orderId}_settings.json`),
-      JSON.stringify(settings)
-    )
-    logger.success(`Print settings saved for ${orderId}: ${JSON.stringify(settings)}`)
-
+    saveSettings(orderId, { copies: Number(copies), printSide, colorMode, pageSize, orientation, pageRange })
     res.json({ success: true, orderId })
   } catch (err) {
-    logger.error(`Failed to save order files: ${err.message}`)
+    logger.error(`save-order failed: ${err.message}`)
     res.json({ success: false, error: err.message })
   }
 })
 
-// GET /tunnel-url — returns current Cloudflare tunnel URL for mobile clients
+// POST /save-order-meta — mobile fallback: PDF is on Drive, just save settings + Drive URL
+app.post('/save-order-meta', (req, res) => {
+  try {
+    const {
+      orderId, driveUrl,
+      copies = 1, printSide = 'Single', colorMode = 'B&W',
+      pageSize = 'A4', orientation = 'portrait', pageRange = 'all',
+    } = req.body
+    if (!orderId) return res.json({ success: false, error: 'Missing orderId' })
+
+    saveSettings(orderId, { copies: Number(copies), printSide, colorMode, pageSize, orientation, pageRange, driveUrl })
+    logger.success(`Order meta saved for ${orderId} — PDF on Drive: ${driveUrl}`)
+    res.json({ success: true, orderId })
+  } catch (err) {
+    logger.error(`save-order-meta failed: ${err.message}`)
+    res.json({ success: false, error: err.message })
+  }
+})
+
 app.get('/tunnel-url', (req, res) => {
   const url = getTunnelUrl()
   res.json({ success: !!url, url: url || null })
 })
 
-// GET /status — health check
 app.get('/status', (req, res) => {
-  res.json({ success: true, message: 'Print agent local server is running' })
+  res.json({ success: true, message: 'Print agent running' })
 })
 
 app.get('/admin/orders', async (req, res) => {
   try {
     const rows = await getAllOrders()
-    const orders = rows.map(order => ({
-      id: order.orderId,
-      fileName: order.fileName || 'Document.pdf',
-      type: order.type,
-      pages: order.totalPages,
-      amount: order.amount,
-      booth: 'Booth 01',
-      status: order.printStatus,
-      time: order.timestamp || new Date().toLocaleTimeString(),
-    }))
-    res.json({ success: true, orders })
-  } catch (err) {
-    res.json({ success: false, error: err.message })
-  }
+    res.json({ success: true, orders: rows.map(o => ({
+      id: o.orderId, fileName: o.fileName || 'Document.pdf',
+      type: o.type, pages: o.totalPages, amount: o.amount,
+      booth: 'Booth 01', status: o.printStatus,
+      time: o.timestamp || new Date().toLocaleTimeString(),
+    }))})
+  } catch (err) { res.json({ success: false, error: err.message }) }
 })
 
 app.get('/admin/stats', async (req, res) => {
   try {
     const rows = await getAllOrders()
-    const totalOrders = rows.length
-    const revenue = rows.reduce((sum, order) => sum + (order.amount || 0), 0)
-    const pending = rows.filter(order => order.printStatus === 'Waiting').length
-    const printed = rows.filter(order => order.printStatus === 'Printed').length
-    const failed = rows.filter(order => order.printStatus === 'Failed').length
-    res.json({ success: true, totalOrders, revenue, pending, printed, failed, activeBooths: 4 })
-  } catch (err) {
-    res.json({ success: false, error: err.message })
-  }
+    res.json({
+      success: true,
+      totalOrders: rows.length,
+      revenue: rows.reduce((s, o) => s + (o.amount || 0), 0),
+      pending: rows.filter(o => o.printStatus === 'Waiting').length,
+      printed: rows.filter(o => o.printStatus === 'Printed').length,
+      failed:  rows.filter(o => o.printStatus === 'Failed').length,
+      activeBooths: 4,
+    })
+  } catch (err) { res.json({ success: false, error: err.message }) }
 })
 
 app.get('/admin/booths', async (req, res) => {
   try {
     const rows = await getAllOrders()
-    const pending = rows.filter(order => order.printStatus === 'Waiting').length
-    const booths = [
-      { name: 'Booth 01', online: true, queue: Math.max(0, Math.round(pending * 0.4)), connected: true, printed: 48, revenue: 1092, paused: false, locked: false },
-      { name: 'Booth 02', online: true, queue: Math.max(0, Math.round(pending * 0.3)), connected: true, printed: 33, revenue: 732, paused: false, locked: false },
-      { name: 'Booth 03', online: true, queue: Math.max(0, Math.round(pending * 0.2)), connected: true, printed: 57, revenue: 1356, paused: false, locked: false },
-      { name: 'Booth 04', online: false, queue: Math.max(0, Math.round(pending * 0.1)), connected: false, printed: 22, revenue: 478, paused: true, locked: false },
-    ]
-    res.json({ success: true, booths })
-  } catch (err) {
-    res.json({ success: false, error: err.message })
-  }
+    const pending = rows.filter(o => o.printStatus === 'Waiting').length
+    res.json({ success: true, booths: [
+      { name: 'Booth 01', online: true,  queue: Math.max(0, Math.round(pending * 0.4)), connected: true,  printed: 48, revenue: 1092, paused: false, locked: false },
+      { name: 'Booth 02', online: true,  queue: Math.max(0, Math.round(pending * 0.3)), connected: true,  printed: 33, revenue: 732,  paused: false, locked: false },
+      { name: 'Booth 03', online: true,  queue: Math.max(0, Math.round(pending * 0.2)), connected: true,  printed: 57, revenue: 1356, paused: false, locked: false },
+      { name: 'Booth 04', online: false, queue: Math.max(0, Math.round(pending * 0.1)), connected: false, printed: 22, revenue: 478,  paused: true,  locked: false },
+    ]})
+  } catch (err) { res.json({ success: false, error: err.message }) }
 })
 
 app.get('/admin/health', async (req, res) => {
   try {
-    const rows = await getAllOrders()
+    const rows    = await getAllOrders()
     const printer = await getDefaultPrinter(false)
-    const checks = [
-      { name: 'Print Agent', status: 'online' },
-      { name: 'Local Server', status: 'online' },
-      { name: 'Google Sheets', status: rows.length >= 0 ? 'online' : 'offline' },
-      { name: 'Cloudflare Tunnel', status: 'online' },
-      { name: 'Printer Connectivity', status: printer ? 'online' : 'offline' },
-    ]
-    res.json({ success: true, checks })
+    res.json({ success: true, checks: [
+      { name: 'Print Agent',        status: 'online' },
+      { name: 'Local Server',       status: 'online' },
+      { name: 'Google Sheets',      status: rows.length >= 0 ? 'online' : 'offline' },
+      { name: 'Cloudflare Tunnel',  status: 'online' },
+      { name: 'Printer',            status: printer ? 'online' : 'offline' },
+    ]})
   } catch (err) {
     res.json({ success: true, checks: [
-      { name: 'Print Agent', status: 'online' },
-      { name: 'Local Server', status: 'online' },
-      { name: 'Google Sheets', status: 'offline' },
-      { name: 'Cloudflare Tunnel', status: 'online' },
-      { name: 'Printer Connectivity', status: 'offline' },
+      { name: 'Print Agent', status: 'online' }, { name: 'Local Server', status: 'online' },
+      { name: 'Google Sheets', status: 'offline' }, { name: 'Cloudflare Tunnel', status: 'online' },
+      { name: 'Printer', status: 'offline' },
     ], error: err.message })
   }
 })
 
-// POST /release-print — booth enters Order ID to trigger print
+// POST /release-print — booth triggers print by Order ID
 app.post('/release-print', async (req, res) => {
   const { orderId } = req.body
   if (!orderId) return res.json({ success: false, error: 'Missing Order ID' })
 
   const order = await getOrderByIdForRelease(orderId.trim().toUpperCase())
+  if (!order)                              return res.json({ success: false, error: 'Order not found. Check the Order ID.' })
+  if (order.releaseStatus === 'Released')  return res.json({ success: false, error: 'Already printed. This order was already released.' })
+  if (order.printStatus   === 'Printing')  return res.json({ success: false, error: 'Already printing. Please wait.' })
 
-  if (!order) {
-    return res.json({ success: false, error: 'Order not found. Check the Order ID.' })
-  }
-  if (order.releaseStatus === 'Released') {
-    return res.json({ success: false, error: 'Already Printed. This order was already released.' })
-  }
-  if (order.printStatus === 'Printing') {
-    return res.json({ success: false, error: 'Already printing. Please wait.' })
-  }
-
-  // Mark as Released immediately so double-tap is blocked
   await updateReleaseStatus(order.rowIndex, 'Released')
   await updatePrintStatus(order.rowIndex, 'Printing')
   res.json({ success: true, message: `Printing started for ${orderId}` })
 
-  // Trigger print async
+  // Async print
   const filePath = path.join(PENDING_DIR, `${order.orderId}.pdf`)
   try {
-    const decoded = decodePendingPdf(order.orderId, filePath)
-    if (!decoded) {
-      logger.warn(`PDF not found locally for ${order.orderId} — marking Failed`)
+    const settings = loadSettings(order.orderId)
+
+    // If PDF not local, try downloading from Drive URL saved in settings
+    let pdfReady = decodePendingPdf(order.orderId, filePath)
+    if (!pdfReady && settings.driveUrl) {
+      logger.info(`PDF not local for ${order.orderId} — downloading from Drive...`)
+      try {
+        await downloadFile(settings.driveUrl, filePath)
+        pdfReady = true
+        logger.success(`PDF downloaded from Drive for ${order.orderId}`)
+      } catch (dlErr) {
+        logger.error(`Drive download failed: ${dlErr.message}`)
+      }
+    }
+
+    if (!pdfReady) {
+      logger.warn(`No PDF found for ${order.orderId} — marking Failed`)
       await updatePrintStatus(order.rowIndex, 'Failed - No PDF')
       return
     }
 
-    // Load persisted print settings (written by /save-order)
-    let settings = {}
-    const settingsPath = path.join(PENDING_DIR, `${order.orderId}_settings.json`)
-    if (fs.existsSync(settingsPath)) {
-      try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) } catch {}
-      fs.unlinkSync(settingsPath)
-    }
-
     const printer = await getDefaultPrinter()
     if (printer) {
-      const success = await printPdf(filePath, {
-        copies:      settings.copies      || order.copies      || 1,
-        printSide:   settings.printSide   || order.printSide   || 'Single',
-        colorMode:   settings.colorMode   || order.printType   || 'B&W',
+      const ok = await printPdf(filePath, {
+        copies:      settings.copies      || order.copies    || 1,
+        printSide:   settings.printSide   || order.printType === 'Double' ? 'Double' : 'Single',
+        colorMode:   settings.colorMode   || order.printType || 'B&W',
         pageSize:    settings.pageSize    || 'A4',
         orientation: settings.orientation || 'portrait',
         pageRange:   settings.pageRange   || 'all',
         orderId:     order.orderId,
       })
-      await updatePrintStatus(order.rowIndex, success ? 'Printed' : 'Failed')
+      await updatePrintStatus(order.rowIndex, ok ? 'Printed' : 'Failed')
     } else {
       await updatePrintStatus(order.rowIndex, 'Printed')
     }
@@ -228,17 +234,14 @@ app.post('/release-print', async (req, res) => {
 })
 
 function startLocalServer() {
-  app.listen(PORT, () => {
-    logger.success(`Local server running on http://localhost:${PORT}`)
-  })
+  app.listen(PORT, () => logger.success(`Local server running on http://localhost:${PORT}`))
 }
 
 function decodePendingPdf(orderId, outputPath) {
   const b64Path = path.join(PENDING_DIR, `${orderId}_pending.b64`)
   if (!fs.existsSync(b64Path)) return false
   const base64 = fs.readFileSync(b64Path, 'utf8')
-  const buffer = Buffer.from(base64, 'base64')
-  fs.writeFileSync(outputPath, buffer)
+  fs.writeFileSync(outputPath, Buffer.from(base64, 'base64'))
   fs.unlinkSync(b64Path)
   return true
 }

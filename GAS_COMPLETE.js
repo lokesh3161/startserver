@@ -40,7 +40,6 @@ function saveOrder(p) {
     .openById(SPREADSHEET_ID)
     .getSheetByName(SHEET_NAME)
 
-  // Generate orderId if not provided — 'XB' + timestamp ms + 3 random chars
   const orderId = p.orderId || ('XB' + String(Math.floor(1000 + Math.random() * 9000)))
 
   sheet.appendRow([
@@ -49,7 +48,7 @@ function saveOrder(p) {
     p.fileName      || '',
     p.totalPages    || '',
     p.copies        || '',
-    p.printType     || '',
+    p.printType     || 'B&W',
     p.amount        || '',
     p.transactionId || '',
     '',
@@ -57,6 +56,10 @@ function saveOrder(p) {
     'Waiting',
     new Date(),
     '',
+    '',
+    p.printSide     || 'Single',
+    p.pageSize      || 'A4',
+    p.orientation   || 'portrait',
   ])
 
   return jsonResponse({ success: true, orderId })
