@@ -2,9 +2,9 @@ const fs     = require('fs')
 const path   = require('path')
 const logger = require('../utils/logger')
 
-const TUNNEL_LOG  = path.join(__dirname, '..', 'tunnel.log')
+const TUNNEL_LOG  = process.env.TUNNEL_LOG || path.join(__dirname, '..', 'tunnel.log')
 const TUNNEL_CACHE = path.join(__dirname, '..', 'tunnel-url.txt')
-const GAS_URL     = 'https://script.google.com/macros/s/AKfycby8ykWErzVD79TrafdArCmA6i9YipHVZOjw7zFWDjpL1e44HlKORx-GAnCuGGYgcmyB/exec'
+const GAS_URL     = 'https://script.google.com/macros/s/AKfycbzHpCucqACQVCtJKnxUo91RstAaRQcklKuMW760cL5rq4EVuTeUqWwui2IJHHxyxyVs/exec'
 
 let currentTunnelUrl = null
 
@@ -63,23 +63,15 @@ async function watchForTunnelUrl(maxWaitMs = 30000) {
 
       if (Date.now() - start > maxWaitMs) {
         clearInterval(interval)
-        // Fall back to cached URL
-        const cached = loadCachedUrl()
-        if (cached) {
-          currentTunnelUrl = cached
-          logger.warn(`Tunnel URL not found in log — using cached: ${cached}`)
-          resolve(cached)
-        } else {
-          logger.warn('No tunnel URL found — mobile orders will not save PDF locally')
-          resolve(null)
-        }
+        logger.warn('Tunnel URL not found in log after timeout — mobile orders may not reach agent')
+        resolve(null)
       }
     }, 1000)
   })
 }
 
 function getTunnelUrl() {
-  return currentTunnelUrl || loadCachedUrl()
+  return currentTunnelUrl || null
 }
 
 module.exports = { watchForTunnelUrl, getTunnelUrl }
