@@ -3,7 +3,7 @@ const logger = require('../utils/logger')
 
 const SPREADSHEET_ID = '16R6KiGoNgH31qEJxCiKrNTD2u99TKHJfDlzgb6iH_nw'
 const SHEET_NAME     = 'Sheet1'
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbwVwHaLIhfCy79DNs66YWKp-eLehHMwKx_UEm-xz0xMPCoAsggn64xmjFXl0KtBNx3Q/exec'
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbyWiu74FuFA-m-uord17vVKSN67y3_Hr7gH1u-mZ6SHafeD818LvRaA194C517_HinS/exec'
 
 const COL = {
   ORDER_ID:       0,
