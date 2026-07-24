@@ -116,6 +116,7 @@ async function getOrderByIdForRelease(orderId) {
           printType:     row[COL.PRINT_TYPE]  || 'B&W',
           printStatus:   row[COL.PRINT_STATUS]  || '',
           releaseStatus: row[COL.RELEASE_STATUS] || 'Waiting For Release',
+          pdfUrl:        row[COL.PDF_URL]     || '',
         }
       }
     }

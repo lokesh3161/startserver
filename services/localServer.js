@@ -185,58 +185,68 @@ app.post('/release-print', async (req, res) => {
   const { orderId } = req.body
   if (!orderId) return res.json({ success: false, error: 'Missing Order ID' })
 
-  const order = await getOrderByIdForRelease(orderId.trim().toUpperCase())
+  const id = orderId.trim().toUpperCase()
+  logger.info(`Booth release request: ${id}`)
+
+  const order = await getOrderByIdForRelease(id)
   if (!order)                              return res.json({ success: false, error: 'Order not found. Check the Order ID.' })
-  if (order.releaseStatus === 'Released')  return res.json({ success: false, error: 'Already printed. This order was already released.' })
+  if (order.releaseStatus === 'Released')  return res.json({ success: false, error: 'Already Printed. This order was already released.' })
   if (order.printStatus   === 'Printing')  return res.json({ success: false, error: 'Already printing. Please wait.' })
 
   await updateReleaseStatus(order.rowIndex, 'Released')
   await updatePrintStatus(order.rowIndex, 'Printing')
-  logger.success(`🖨️  Releasing print for ${orderId} — ${order.fileName || 'document'}`)
-  res.json({ success: true, message: `Printing started for ${orderId}` })
+  logger.success(`🖨️  Releasing: ${id} | ${order.fileName || 'document'} | ${order.copies || 1} copy`)
+  res.json({ success: true, message: `Printing started for ${id}` })
 
-  // Async print
   const filePath = path.join(PENDING_DIR, `${order.orderId}.pdf`)
   try {
     const settings = loadSettings(order.orderId)
+    logger.info(`Settings: ${JSON.stringify(settings)}`)
 
-    // If PDF not local, try downloading from Drive URL saved in settings
+    // 1. Try local b64 file
     let pdfReady = decodePendingPdf(order.orderId, filePath)
+    if (pdfReady) { logger.success(`PDF loaded from local storage`) }
+
+    // 2. Try driveUrl from settings
     if (!pdfReady && settings.driveUrl) {
-      logger.info(`PDF not local for ${order.orderId} — downloading from Drive...`)
-      try {
-        await downloadFile(settings.driveUrl, filePath)
-        pdfReady = true
-        logger.success(`PDF downloaded from Drive for ${order.orderId}`)
-      } catch (dlErr) {
-        logger.error(`Drive download failed: ${dlErr.message}`)
-      }
+      logger.info(`Downloading PDF from Drive...`)
+      try { await downloadFile(settings.driveUrl, filePath); pdfReady = true; logger.success(`PDF downloaded from Drive`) }
+      catch (e) { logger.error(`Drive download failed: ${e.message}`) }
+    }
+
+    // 3. Try pdfUrl from GAS sheet (column M)
+    if (!pdfReady && order.pdfUrl) {
+      logger.info(`Downloading PDF from GAS sheet URL...`)
+      try { await downloadFile(order.pdfUrl, filePath); pdfReady = true; logger.success(`PDF downloaded from sheet URL`) }
+      catch (e) { logger.error(`Sheet URL download failed: ${e.message}`) }
     }
 
     if (!pdfReady) {
-      logger.warn(`No PDF found for ${order.orderId} — marking Failed`)
+      logger.warn(`No PDF found for ${id} — cannot print`)
       await updatePrintStatus(order.rowIndex, 'Failed - No PDF')
       return
     }
 
-    logger.info(`Sending to printer...`)
+    logger.info(`Sending to printer: ${order.fileName || 'document'}`)
     const printer = await getDefaultPrinter()
     if (printer) {
       const ok = await printPdf(filePath, {
         copies:      settings.copies      || order.copies    || 1,
-        printSide:   settings.printSide   || order.printType === 'Double' ? 'Double' : 'Single',
+        printSide:   settings.printSide   || (order.printType === 'Double' ? 'Double' : 'Single'),
         colorMode:   settings.colorMode   || order.printType || 'B&W',
         pageSize:    settings.pageSize    || 'A4',
         orientation: settings.orientation || 'portrait',
         pageRange:   settings.pageRange   || 'all',
         orderId:     order.orderId,
       })
+      logger.success(`Print job ${ok ? 'sent to printer ✓' : 'FAILED ✗'}`)
       await updatePrintStatus(order.rowIndex, ok ? 'Printed' : 'Failed')
     } else {
+      logger.warn('No printer — marking Printed anyway')
       await updatePrintStatus(order.rowIndex, 'Printed')
     }
   } catch (err) {
-    logger.error(`Release print error for ${order.orderId}: ${err.message}`)
+    logger.error(`Release error for ${id}: ${err.message}`)
     await updatePrintStatus(order.rowIndex, 'Failed')
   } finally {
     if (fs.existsSync(filePath)) deletePdf(filePath)
