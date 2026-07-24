@@ -48,31 +48,60 @@ async function getDefaultPrinter(verbose = true) {
 
 /**
  * Print a PDF file
- * @param {string} filePath  - Local path to the PDF
+ * @param {string} filePath
  * @param {object} options
- * @param {number} options.copies    - Number of copies
- * @param {string} options.printType - "B&W" or "Color"
- * @param {string} options.orderId   - For logging
+ * @param {number} options.copies
+ * @param {string} options.printSide   - 'Single' | 'Double'
+ * @param {string} options.colorMode   - 'B&W' | 'Color'
+ * @param {string} options.pageSize    - 'A4' | 'Letter' | ...
+ * @param {string} options.orientation - 'portrait' | 'landscape'
+ * @param {string} options.pageRange   - 'all' | '1-3,5' | ...
+ * @param {string} options.orderId
  */
 async function printPdf(filePath, options = {}) {
-  const { copies = 1, printType = 'B&W', orderId = '' } = options
+  const {
+    copies      = 1,
+    printSide   = 'Single',
+    colorMode   = 'B&W',
+    pageSize    = 'A4',
+    orientation = 'portrait',
+    pageRange   = 'all',
+    orderId     = '',
+  } = options
 
   try {
     const printerName = await getDefaultPrinter()
     if (!printerName) throw new Error('No printer available')
 
     logger.info(`Printing order ${orderId} → ${printerName}`)
-    logger.info(`  Copies: ${copies} | Type: ${printType}`)
+    logger.info(`  Copies: ${copies} | Side: ${printSide} | Color: ${colorMode} | Size: ${pageSize} | Orient: ${orientation}`)
 
     const printOptions = {
-      printer: printerName,
-      copies:  copies,
-      silent:  true,
+      printer:   printerName,
+      copies:    Number(copies),
+      silent:    true,
+      paperSize: pageSize.toUpperCase(),   // 'A4', 'LETTER', etc.
+      scale:     'fit',                    // fit-to-page — prevents shrink-scaling on size mismatch
     }
 
-    // Add grayscale for B&W printing
-    if (printType === 'B&W' || printType === 'Black & White') {
+    // Duplex / double-sided
+    if (printSide === 'Double') {
+      printOptions.duplex = 'long-edge'    // long-edge = standard double-sided
+    }
+
+    // Grayscale for B&W
+    if (colorMode === 'B&W' || colorMode === 'Black & White') {
       printOptions.monochrome = true
+    }
+
+    // Landscape orientation
+    if (orientation === 'landscape') {
+      printOptions.landscape = true
+    }
+
+    // Page range (skip if 'all')
+    if (pageRange && pageRange !== 'all') {
+      printOptions.pages = pageRange       // e.g. '1-3,5'
     }
 
     await ptp.print(filePath, printOptions)

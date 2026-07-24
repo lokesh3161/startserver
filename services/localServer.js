@@ -38,21 +38,30 @@ app.post('/booth-login', (req, res) => {
   res.json({ success: true })
 })
 
-// POST /save-order — receives PDF + screenshot from browser
+// POST /save-order — receives PDF + screenshot + print settings from browser
 app.post('/save-order', (req, res) => {
   try {
-    const { orderId, fileName, pdfBase64, screenshotBase64 } = req.body
+    const {
+      orderId, fileName, pdfBase64, screenshotBase64,
+      copies = 1, printSide = 'Single', colorMode = 'B&W',
+      pageSize = 'A4', orientation = 'portrait', pageRange = 'all',
+    } = req.body
     if (!orderId) return res.json({ success: false, error: 'Missing orderId' })
 
     if (pdfBase64) {
-      const pdfPath = path.join(PENDING_DIR, `${orderId}_pending.b64`)
-      fs.writeFileSync(pdfPath, pdfBase64)
+      fs.writeFileSync(path.join(PENDING_DIR, `${orderId}_pending.b64`), pdfBase64)
       logger.success(`PDF saved locally for order ${orderId}`)
     }
 
-    if (screenshotBase64) {
-      saveScreenshotLocally(orderId, screenshotBase64)
-    }
+    if (screenshotBase64) saveScreenshotLocally(orderId, screenshotBase64)
+
+    // Persist print settings so release-print can read them
+    const settings = { copies: Number(copies), printSide, colorMode, pageSize, orientation, pageRange }
+    fs.writeFileSync(
+      path.join(PENDING_DIR, `${orderId}_settings.json`),
+      JSON.stringify(settings)
+    )
+    logger.success(`Print settings saved for ${orderId}: ${JSON.stringify(settings)}`)
 
     res.json({ success: true, orderId })
   } catch (err) {
@@ -175,9 +184,26 @@ app.post('/release-print', async (req, res) => {
       await updatePrintStatus(order.rowIndex, 'Failed - No PDF')
       return
     }
+
+    // Load persisted print settings (written by /save-order)
+    let settings = {}
+    const settingsPath = path.join(PENDING_DIR, `${order.orderId}_settings.json`)
+    if (fs.existsSync(settingsPath)) {
+      try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) } catch {}
+      fs.unlinkSync(settingsPath)
+    }
+
     const printer = await getDefaultPrinter()
     if (printer) {
-      const success = await printPdf(filePath, { copies: order.copies, printType: order.printType, orderId: order.orderId })
+      const success = await printPdf(filePath, {
+        copies:      settings.copies      || order.copies      || 1,
+        printSide:   settings.printSide   || order.printSide   || 'Single',
+        colorMode:   settings.colorMode   || order.printType   || 'B&W',
+        pageSize:    settings.pageSize    || 'A4',
+        orientation: settings.orientation || 'portrait',
+        pageRange:   settings.pageRange   || 'all',
+        orderId:     order.orderId,
+      })
       await updatePrintStatus(order.rowIndex, success ? 'Printed' : 'Failed')
     } else {
       await updatePrintStatus(order.rowIndex, 'Printed')
